@@ -1,24 +1,74 @@
 # Phrase recognition service Django MLaaS
 
 ### User enters phrase. The app then trains a lightweight AI model to detect the phrase in audio. Once the training is finished, the user can download the model and run inference locally due to the small size.
-![screenshot.png](How the django app looks)
+
+![How the Django app looks](screenshot.png)
+
 # The model
+
+The core model is a small convolutional–recurrent network (`TinyCRNN`) trained as a
+**binary classifier: “does this window contain the keyphrase?”**.
+
+- **Input**: log-mel spectrograms
+- **Backbone**: a lightweight CNN + RNN over time (see `model/model.py`) to extract features, then MLP head turns them into scores.
+- **Output**: a single logit per window, trained with `BCEWithLogitsLoss`.
+- **Training loop**:
+  - Data is generated and indexed into a pandas `DataFrame`.
+  - `AudioDataset` (in `model/dataset.py`) loads audio paths, resamples, builds spectrograms, and yields `(spec, label)` pairs.
+  - `pipeline/training_pipeline.py` wraps the whole process (data generation -> dataset -> training -> saving a `.pt` file).
+- **Entry points**:
+  - CLI: `python main.py` prompts for a keyphrase, generates data, trains, and prints metrics.
+  - Web UI: `uv run webui/manage.py runserver` starts the Django app where you can enter a phrase and download the trained model.
+
+# Dataset generation
+
+Audio data is synthesized on the fly and cached in an SQLite database for reuse.
+The main orchestration lives in `data_generation/main_audio_generator.py`.
+
+- **Phrase buckets** (`generate_with_augmentations`):
+  - **Positives**: phrases that contain the keyphrase.
+  - **Confusers**: similar-sounding phrases that should *not* trigger.
+  - **In-between negatives**: phrases partially overlapping semantically or phonetically.
+  - **Plain negatives**: unrelated phrases from a background corpus.
+- **Augmentation**:
+  - Text: `phrase_augmentation/*` generates variations (extra words, word swaps, confusers, punctuation).
+  - Audio: `audio_augmentation/*` applies timing crops, silence trimming, etc., to diversify the same phrase.
+- **TTS backends** (`audio_generation/*`):
+  - Multiple engines (Piper, Kokoro, Suno/Bark, ElevenLabs, TPS corpus) can be used to synthesize each phrase.
+  - Each engine runs in an isolated environment and returns metadata (path, duration, sample rate, text, API name).
+- **Database & reuse**:
+  - All generated samples are indexed in `db/db.sqlite3` via `db/db_api.py` so future runs can reuse them.
+  - For each category, the generator:
+    - Counts how many suitable clips already exist in the DB.
+    - Computes a **target number of clips** = `num_phrases * clips_per_phrase`.
+    - Generates `max(growth_constant, target - existing)` brand-new clips so the dataset keeps growing over time.
 
 ### Setup
 
-- Make sql database for reusable audio samples:
-  
+- **Create Python env & install deps**
+  - `python3 -m venv .venv && source .venv/bin/activate`
+  - `pip install -r requirements.txt`
+
+- **Initialize the audio samples database**
   - `sudo apt install sqlite3`
-  
   - `sqlite3 db/db.sqlite3 < db/db.sql`
 
-- Useful but not necessary: the project uses ElevenLabs TTS to make better datasets,
-  so to use this (paid) TTS, u need to specify API key:
-  
-  - `cd elevenlabs_side/internals`
-  
-  - `nano .env`
-  
-  - There, write `ELEVENLABS_API_KEY=<your key>`
+- **(Optional) ElevenLabs TTS API key**
+  - This is only needed if you want premium TTS as part of data generation.
+  - Create `.env` with your API key:
+    - `cd audio_generation/elevenlabs_side/internals`
+    - `nano .env`
+    - Add: `ELEVENLABS_API_KEY=<your key>`
 
+- **Prepare Django web UI database**
+  - `cd webui`
+  - `python manage.py migrate`
+
+- **Run the web UI**
+  - From repo root (venv active): `python webui/manage.py runserver`
+  - Open `http://127.0.0.1:8000` in your browser, enter a keyphrase, start a run, then download the model once training completes.
+
+- **Run the CLI pipeline instead (no UI)**
+  - From repo root: `python main.py`
+  - Enter a keyphrase when prompted; the script will generate data, train, and print final metrics + model path.
 
