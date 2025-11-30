@@ -65,9 +65,7 @@ def crop_silence(
 ) -> Tuple[np.ndarray, int]:
     """
     Remove leading and/or trailing silence from a WAV file.
-    - Silence detection uses librosa.effects.split (top_db threshold).
-    - Only trims the start and/or end; internal pauses are preserved.
-    - Snap cut points to nearest zero crossing and apply a short fade.
+    Snap cut points to nearest zero crossing and add a short fade in/out.
     """
     y, sr = librosa.load(wav_path, sr=None, mono=True)
     if isinstance(top_db, str) and top_db.lower() == "auto":
@@ -75,9 +73,9 @@ def crop_silence(
             y, sr,
             frame_length=frame_length,
             hop_length=hop_length,
-            percentile=0.10,    # tweak: 0.05–0.15
-            margin_db=6.0,      # tweak: 3–10
-            region="sides",     # or "global"
+            percentile=0.10,    #0.05–0.15
+            margin_db=6.0,      # 3–10
+            region="sides",     # other option - "global"
         )
     else:
         top_db_val = float(top_db)
@@ -96,12 +94,12 @@ def crop_silence(
     if remove_right:
         end = int(intervals[-1, 1])
 
-    # snap to nearest zero crossing (±8 ms)
+    # snap to nearest zero crossing (+-8 ms)
     zmax = int(sr * 0.008)
     start = _nearest_zero_cross(y, start, zmax)
     end = _nearest_zero_cross(y, end, zmax)
     if end <= start:
-        end = min(len(y), start + int(0.05 * sr))  # ensure non-empty
+        end = min(len(y), start + int(0.05 * sr))  # must be non-empty
 
     y_crop = y[start:end]
 

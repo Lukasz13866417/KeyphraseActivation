@@ -89,7 +89,7 @@ def generate_for_phrase(
         except Exception as e:
             print(f"[audio_generation] Piper failed: {e}")
 
-    # Bark (Suno)
+    # Bark
     if counts["bark"] > 0:
         try:
             recs = bark_synthesize(
@@ -117,7 +117,7 @@ def generate_for_phrase(
 
     print(f"Counts: {counts}")
 
-    # ElevenLabs
+    # 11
     if counts["eleven"] > 0:
         try:
             recs = eleven_synthesize(
@@ -134,7 +134,6 @@ def generate_for_phrase(
 
 
 if __name__ == "__main__":
-    # Simple manual test
     records = generate_for_phrase(
         phrase="AI money machine",
         num_samples=6,

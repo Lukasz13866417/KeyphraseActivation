@@ -39,7 +39,7 @@ def run_internals_synthesizer(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not internals_dir.exists():
         raise FileNotFoundError(f"Internals directory not found: {internals_dir}")
 
-    # Ensure output directory exists (if provided)
+    # Create dir if nonexistent
     out_dir = args.get("output_dir")
     if out_dir:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -145,16 +145,16 @@ def clear_samples(remove_from_db: bool = True) -> int:
                 conn.execute("DELETE FROM audio_sample WHERE api_name = ?", (API_NAME,))
                 conn.commit()
         except Exception:
-            # DB may not be initialized/available; ignore silently as requested
+            # DB may not be initialized/available
             pass
     return removed
 
 
 def main() -> None:
     """
-    Simple smoke test for the driver: runs one sample and prints the returned JSON list.
+    Simple test for the driver: runs one sample and prints the JSON list.
     """
-    print("[kokoro driver] Running smoke test...")
+    print("[kokoro driver] Running test...")
     phrase = "Hello from Kokoro! Is this a test?"
     try:
         # With punctuation (default normalization: True)

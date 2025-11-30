@@ -31,5 +31,6 @@ artifacts/
 
 # Kokoro and other model binaries (can be re-downloaded)
 audio_generation/kokoro_side/internals/models/
+audio_generation/piper_side/internals/models/
 
 

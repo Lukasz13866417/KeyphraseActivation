@@ -47,10 +47,10 @@ def _nearest_zero_cross(y: np.ndarray, sidx: int, max_search: int) -> int:
 
 def _nearest_zero_cross_dir(y: np.ndarray, sidx: int, max_search: int, direction: str) -> int:
     """
-    Directional zero-cross search:
-    - 'left'  → search backward first to favor earlier cut
-    - 'right' → search forward first to favor later cut
-    - other   → nearest in either direction
+    Search for a zero-cross :
+    - 'left'  -> search backward first to favor earlier cut
+    - 'right' -> search forward first to favor later cut
+    - other   -> nearest zero crossing in either direction
     """
     n = len(y)
     sidx = int(np.clip(sidx, 1, n - 1))
@@ -79,7 +79,7 @@ def _natural_cut_sample(
     zero_search_ms: int = 8,
     target_jitter_frames: int = 12,
 ) -> int:
-    # Jitter the target a bit (+/- target_jitter_frames frames) to avoid locking onto the same valley every time
+    # Jitter the target a bit (+- target_jitter_frames frames) to avoid locking onto the same valley every time
     target_frame = int(np.clip(round(target_sample / hop), 0, len(energy) - 1))
     jf = max(0, int(target_jitter_frames))
     if jf > 0:
@@ -141,7 +141,7 @@ def crop_audio(
     y, sr = librosa.load(wav_path, sr=None, mono=True)
     n = len(y)
     hop = 512
-    onset_env, energy, zcr, frames = _features(y, sr, hop=hop)
+    onset_env, energy, frames = _features(y, sr, hop=hop)
     peaks = _peak_pick(onset_env)
 
     # Compute conservative limits so we don't cut into neighboring words too far
