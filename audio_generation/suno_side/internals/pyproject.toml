@@ -1,0 +1,13 @@
+[project]
+name = "suno-internals"
+version = "0.1.0"
+description = "Suno Bark TTS internals"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bark",
+    "numpy>=1.26",
+    "soundfile>=0.13.1",
+]
+
+

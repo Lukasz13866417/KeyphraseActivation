@@ -1,0 +1,8 @@
+piper-tts
+onnxruntime
+huggingface_hub
+numpy
+soundfile
+torch
+torchaudio
+requests

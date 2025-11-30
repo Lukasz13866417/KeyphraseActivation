@@ -1,0 +1,16 @@
+uv>=0.4.0
+wordfreq
+soundfile
+numpy
+librosa
+jellyfish
+rapidfuzz
+g2p_en
+ctc_segmentation
+transformers
+torch
+datasets
+torchaudio
+pandas
+torchcodec
+Django>=5.1

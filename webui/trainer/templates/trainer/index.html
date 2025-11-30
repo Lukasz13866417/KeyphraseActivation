@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Keyphrase Trainer</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 2rem auto;
+        max-width: 900px;
+        color: #222;
+      }
+      h1 {
+        margin-bottom: 0.5rem;
+      }
+      form {
+        border: 1px solid #ddd;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 2rem;
+      }
+      label {
+        display: block;
+        margin-top: 0.5rem;
+      }
+      input {
+        width: 100%;
+        padding: 0.4rem;
+        margin-top: 0.25rem;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 1rem;
+        padding: 0.5rem 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 0.5rem;
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+      }
+      .status {
+        font-weight: bold;
+        text-transform: capitalize;
+      }
+      .log {
+        font-family: monospace;
+        white-space: pre-line;
+        max-height: 120px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Keyphrase Training</h1>
+    <p>Generate audio data, train the model, and download the trained model's parameters once training is done.</p>
+
+    <form method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}*{% endif %}</label>
+        {{ field }}
+        {% if field.errors %}
+          <div style="color: red">
+            {{ field.errors|striptags }}
+          </div>
+        {% endif %}
+      {% endfor %}
+      <button type="submit">Start Training Run</button>
+    </form>
+
+    <h2>Recent Runs</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Keyphrase</th>
+          <th>Status</th>
+          <th>Metrics</th>
+          <th>Logs</th>
+          <th>Download</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td>{{ run.key_phrase }}</td>
+            <td class="status">{{ run.status }}</td>
+            <td>
+              {% if run.train_loss %}
+                Train loss: {{ run.train_loss|floatformat:4 }}<br />
+                Val loss: {{ run.val_loss|floatformat:4 }}<br />
+                Macro F1: {{ run.macro_f1|floatformat:4 }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="log">
+              {% if run.log %}
+                {{ run.log }}
+              {% else %}
+                Awaiting updates…
+              {% endif %}
+            </td>
+            <td>
+              {% if run.is_download_ready %}
+                <a href="{% url 'trainer:download' run.id %}">Download Model</a>
+              {% else %}
+                Not ready
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5">No runs yet. Start one above!</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>
+
