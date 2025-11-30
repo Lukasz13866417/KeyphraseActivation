@@ -34,8 +34,10 @@ The main orchestration lives in `data_generation/main_audio_generator.py`.
   - Text: `phrase_augmentation/*` generates variations (extra words, word swaps, confusers, punctuation).
   - Audio: `audio_augmentation/*` applies timing crops, silence trimming, etc., to diversify the same phrase.
 - **TTS backends** (`audio_generation/*`):
-  - Multiple engines (Piper, Kokoro, Suno/Bark, ElevenLabs, TPS corpus) can be used to synthesize each phrase.
+  - Multiple engines (Piper, Kokoro, Suno/Bark, ElevenLabs) can be used to synthesize each phrase.
   - Each engine runs in an isolated environment and returns metadata (path, duration, sample rate, text, API name).
+- **Big natural speech datasets** 
+  - I'm also taking samples from the TPS corpus to save some time on generating plain negatives with TTS.
 - **Database & reuse**:
   - All generated samples are indexed in `db/db.sqlite3` via `db/db_api.py` so future runs can reuse them.
   - For each category, the generator:
