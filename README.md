@@ -1,7 +1,7 @@
 # Phrase recognition service Django MLaaS
 
 ### User enters phrase. The app then trains a lightweight AI model to detect the phrase in audio. Once the training is finished, the user can download the model and run inference locally due to the small size.
-!(screenshot.png)[How the django app looks]
+![screenshot.png](How the django app looks)
 # The model
 
 ### Setup
