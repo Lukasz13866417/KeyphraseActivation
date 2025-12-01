@@ -23,11 +23,16 @@ The core model is a small convolutional–recurrent network (`TinyCRNN`) trained
   - CLI: `python main.py` prompts for a keyphrase, generates data, trains, and prints metrics.
   - Web UI: `uv run webui/manage.py runserver` starts the Django app where you can enter a phrase and download the trained model.
 
-# Dataset generation
+# Dataset
 
-Audio data is synthesized on the fly and cached in an SQLite database for reuse.
-The main orchestration lives in `data_generation/main_audio_generator.py`.
+Some audio data is synthesized on the fly and cached in an **SQLite database** for reuse.<br>
+A large portion is reused to speed up user experience
+## Reusing
+I have put a significant amount of effort to reuse as much of the data as possible. <br>
+- With SQL I find samples containing the keyphrase. Knowing the transcripts for everything, I use CTC segmentation (publicly available lightweight model) to find they keyphrase in audio and feed it to the dataset.
+- Naturally I can find many more negatives, so most negatives are already present in the database (**except for confusers**)
 
+## Data generation
 - **Phrase buckets** (`generate_with_augmentations`):
   - **Positives**: phrases that contain the keyphrase.
   - **Confusers**: similar-sounding phrases that should *not* trigger.
