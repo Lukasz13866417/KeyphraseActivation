@@ -9,18 +9,17 @@
 
 # The model
 
-The core model is a small convolutional–recurrent network (`TinyCRNN`) trained as a
-**binary classifier: “does this window contain the keyphrase?”**.
-
-- **Input**: log-mel spectrograms
+The core model is a small convolutional–recurrent network connected to MLP to perform
+**binary classification: "does this window contain the keyphrase?"**.
+- **Input**: log-mel spectrograms (log-mel = scale suited for human speech frequencies)
 - **Backbone**: a lightweight CNN + RNN over time (see `model/model.py`) to extract features, then MLP head turns them into scores.
-- **Output**: a single logit per window, trained with `BCEWithLogitsLoss`.
+- **Output**: one logit per window, trained with `BCEWithLogitsLoss`.
 - **Training loop**:
   - Data is generated and indexed into a pandas `DataFrame`.
   - `AudioDataset` (in `model/dataset.py`) loads audio paths, resamples, builds spectrograms, and yields `(spec, label)` pairs.
   - `pipeline/training_pipeline.py` wraps the whole process (data generation -> dataset -> training -> saving a `.pt` file).
 - **Entry points**:
-  - CLI: `python main.py` prompts for a keyphrase, generates data, trains, and prints metrics.
+  - CLI: `uv run main.py` prompts for a keyphrase, generates data, trains, and prints metrics.
   - Web UI: `uv run webui/manage.py runserver` starts the Django app where you can enter a phrase and download the trained model.
 
 # Dataset
@@ -53,7 +52,10 @@ I have put a significant amount of effort to reuse as much of the data as possib
     - Computes a **target number of clips** = `num_phrases * clips_per_phrase`.
     - Generates `max(growth_constant, target - existing)` brand-new clips so the dataset keeps growing over time.
 
-### Setup
+# Project structure
+- To avoid dependency issues, major sub-projects (subfolders of `audio_generation` that use TTS engines, also `data_generation/keyword_finding`) are separate projects that communicate with the main one using driver scripts (using `subprocess` library)
+
+# Setup
 
 - **Create Python env & install deps**
   - `python3 -m venv .venv && source .venv/bin/activate`
