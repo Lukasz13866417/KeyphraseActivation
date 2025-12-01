@@ -25,12 +25,21 @@ from phrase_augmentation.util import get_word_base
 from phrase_augmentation.punct_augmenter import add_punct
 
 from db import db_api
+from data_generation.keyphrase_finding.driver import extract_keyphrase_audio
+from data_generation.keyphrase_finding.internal.finder import (
+    find_keyphrase_segment_with_margin,
+)
 
 API_ORDER = ("piper", "bark", "kokoro", "eleven")
 _NONWORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _WHITESPACE_RE = re.compile(r"\s+")
 _DB_READY = False
 _MAX_SYNTH_WORKERS = max(1, min(8, int(os.getenv("AUDIO_GEN_MAX_WORKERS", "4"))))
+_MAX_POSITIVE_DURATION_SEC = float(os.getenv("AUDIO_GEN_MAX_POSITIVE_DURATION_SEC", "4.0"))
+_MIN_POSITIVE_SEGMENT_SEC = float(os.getenv("AUDIO_GEN_MIN_POSITIVE_SEGMENT_SEC", "0.6"))
+_KEYPHRASE_PAD_PRE_SEC = float(os.getenv("AUDIO_GEN_KEYPHRASE_PAD_PRE_SEC", "0.15"))
+_KEYPHRASE_PAD_POST_SEC = float(os.getenv("AUDIO_GEN_KEYPHRASE_PAD_POST_SEC", "0.15"))
+_REUSED_CLIP_SUBDIR = os.getenv("AUDIO_GEN_REUSED_CLIP_SUBDIR", "reused_clips")
 
 
 def _project_root() -> Path:
@@ -259,6 +268,103 @@ def _generate_plain_negative_phrases(
             continue
         phrases.add(candidate)
     return list(phrases)
+
+
+def _maybe_clip_record_to_keyphrase(
+    record: dict,
+    key_phrase: str,
+    output_dir: str,
+) -> Optional[dict]:
+    if _MAX_POSITIVE_DURATION_SEC <= 0:
+        return record
+    duration = record.get("duration_sec")
+    if duration is None or duration <= _MAX_POSITIVE_DURATION_SEC:
+        return record
+
+    path = record.get("path")
+    transcript = (record.get("text") or "").strip()
+    if not path or not transcript or not key_phrase:
+        print(
+            "[main_audio_generator] Skipping overlong positive without transcript/path.",
+            flush=True,
+        )
+        return None
+
+    min_duration = max(0.0, _MIN_POSITIVE_SEGMENT_SEC)
+    max_duration = _MAX_POSITIVE_DURATION_SEC if _MAX_POSITIVE_DURATION_SEC > 0 else None
+    if max_duration is not None and min_duration > max_duration:
+        min_duration = max_duration
+
+    try:
+        span_start, span_end = find_keyphrase_segment_with_margin(
+            wav_path=path,
+            transcript=transcript,
+            keyphrase=key_phrase,
+            pre_padding_sec=_KEYPHRASE_PAD_PRE_SEC,
+            post_padding_sec=_KEYPHRASE_PAD_POST_SEC,
+            min_duration_sec=min_duration,
+            max_duration_sec=max_duration,
+        )
+    except Exception as exc:
+        print(
+            f"[main_audio_generator] Keyphrase finder failed for '{path}': {exc}",
+            flush=True,
+        )
+        return None
+
+    clip_duration = span_end - span_start
+    if clip_duration <= 0.05:
+        print(
+            f"[main_audio_generator] Finder returned degenerate span ({clip_duration:.3f}s) for '{path}'.",
+            flush=True,
+        )
+        return None
+
+    reuse_dir = Path(output_dir).resolve() / _REUSED_CLIP_SUBDIR
+    reuse_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(
+        f"{path}|{span_start:.3f}|{span_end:.3f}|{key_phrase}".encode("utf-8")
+    ).hexdigest()[:16]
+    suffix = Path(path).suffix or ".wav"
+    out_path = reuse_dir / f"reuse_{digest}{suffix}"
+
+    if not out_path.exists():
+        try:
+            extract_keyphrase_audio(path, span_start, span_end, str(out_path))
+        except Exception as exc:
+            print(
+                f"[main_audio_generator] Failed to extract keyphrase clip '{out_path}': {exc}",
+                flush=True,
+            )
+            return None
+
+    clipped = dict(record)
+    clipped["path"] = str(out_path.resolve())
+    clipped["duration_sec"] = clip_duration
+    clipped["from_db"] = False
+    _insert_records([clipped])
+    print(
+        "[main_audio_generator] Reused long positive by clipping"
+        f" {Path(path).name} -> {out_path.name} (orig={duration:.2f}s clip={clip_duration:.2f}s)",
+        flush=True,
+    )
+    return clipped
+
+
+def _prepare_positive_records(
+    records: List[dict],
+    key_phrase: str,
+    output_dir: str,
+) -> List[dict]:
+    if not records:
+        return []
+    processed: List[dict] = []
+    for rec in records:
+        clipped = _maybe_clip_record_to_keyphrase(rec, key_phrase, output_dir)
+        if clipped is None:
+            continue
+        processed.append(clipped)
+    return processed
 
 
 def _fetch_records_for_phrases(
@@ -624,6 +730,8 @@ def generate_with_augmentations(
             existing_records = _fetch_plain_negative_records(key_norm, needed_samples)
         else:
             existing_records = _fetch_records_for_phrases(phrases, needed_samples)
+        if bucket == "positives":
+            existing_records = _prepare_positive_records(existing_records, key_phrase, output_dir)
         existing_used = min(len(existing_records), needed_samples)
         new_target = max(growth_constant, max(0, needed_samples - existing_used))
         new_records = _generate_new_records(

@@ -29,8 +29,8 @@ artifacts/
 # UV / build caches
 .uv/
 
-# Kokoro and other model binaries (can be re-downloaded)
 audio_generation/kokoro_side/internals/models/
 audio_generation/piper_side/internals/models/
-
+audio_generation/elevenlabs_side/internals/.env 
+audio_generation/suno_side/internals/.venv/
 

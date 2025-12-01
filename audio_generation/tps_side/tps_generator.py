@@ -23,9 +23,9 @@ def get_wavs_from_tps(
 ) -> List[Dict[str, object]]:
     """
     Stream short audio clips from The People's Speech dataset, save them as WAV files,
-    and return Piper-style metadata records describing each clip.
+    and return metadata in the style of this project (records describing each clip)
 
-    Selects clips 2-10 words long and up to 6 seconds duration.
+    Selects clips 2-10 words long and up to 6 seconds duration to aim for realistic keyphrases / clips passed for inference.
     """
     if num_clips <= 0:
         return []
@@ -50,16 +50,11 @@ def get_wavs_from_tps(
         attempts += 1
         text = sample["text"]
         duration_ms = sample["duration_ms"]
-        # Count words in the transcript
         word_count = len(text.split())
-        # Filter criteria: 2-10 words and <= 6000 ms (6 seconds)
         if 2 <= word_count <= 10 and duration_ms <= 6000:
-            # Extract audio array and sampling rate (16 kHz):contentReference[oaicite:9]{index=9}:contentReference[oaicite:10]{index=10}
             audio_array = sample["audio"]["array"]  # numpy array of audio samples
             sample_rate = sample["audio"]["sampling_rate"]  # should be 16000 Hz
-            # Construct a filename for the clip (e.g., tps_clip_1.wav, tps_clip_2.wav, ...)
             filename = samples_dir / f"tps_peoples_speech_clean_{clips_saved:04d}.wav"
-            # Save the audio clip to disk as a WAV file:contentReference[oaicite:11]{index=11}
             sf.write(filename, audio_array, sample_rate)
 
             duration_sec = duration_ms / 1000.0 if duration_ms else len(audio_array) / sample_rate

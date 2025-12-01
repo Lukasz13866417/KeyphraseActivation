@@ -17,7 +17,6 @@ def get_word_base(lang: str = "en", n: int = 100_000, lowercase: bool = True) ->
     Return a cached, immutable word list (tuple) of the top-N words for a language.
     - Uses wordfreq.top_n_list under the hood
     - Cached via lru_cache so repeated calls do not copy data
-    - Returns a tuple to avoid accidental modification
     """
     words = top_n_list(lang, n)
     if lowercase:
@@ -28,6 +27,6 @@ def get_word_base(lang: str = "en", n: int = 100_000, lowercase: bool = True) ->
 def iter_word_base(lang: str = "en") -> Iterable[str]:
     """
     Generator over a language's word list without loading everything into memory.
-    Useful when you want to avoid holding the full list.
+    Useful because we don't want to hold the full list in RAM.
     """
     return iter_wordlist(lang)

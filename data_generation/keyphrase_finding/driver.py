@@ -1,3 +1,7 @@
+""" 
+Driver for the keyphrase finder. Made by AI.
+TODO: review this
+""" 
 import json
 import os
 import re
@@ -112,7 +116,7 @@ def find_keyphrase(
         if matches_json:
             try:
                 return json.loads(matches_json)
-    except Exception:
+            except json.JSONDecodeError:
                 pass
         if check and proc.returncode != 0:
             raise subprocess.CalledProcessError(proc.returncode, cmd)

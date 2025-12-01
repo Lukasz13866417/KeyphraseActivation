@@ -1,3 +1,6 @@
+"""Driver for the Piper TTS engine. Made by AI.
+TODO: review this
+"""
 import json
 import os
 import shutil

@@ -35,6 +35,7 @@ def _run_training(run_id: int) -> None:
             "num_plain_negatives": run.config.get("num_plain_negatives", 100),
             "growth_constant": run.config.get("growth_constant", 5),
         }
+        # TODO add num_eleven_per, num_tps_random, num_bark_per, num_kokoro_per, num_piper_per as UI args
         config = TrainingConfig(
             key_phrase=run.key_phrase,
             num_piper_per=10,

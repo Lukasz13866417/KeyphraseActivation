@@ -16,10 +16,13 @@ def _log(msg: str, *, quiet: bool):
 
 
 def _safe_component(text: str) -> str:
+    """ Replace non-alphanumeric characters with underscores to get predictable file names. """
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in text)
 
 
 def _unicode_to_ascii_punct(text: str) -> str:
+    """ Map common Unicode punctuation to ASCII equivalents without adding new punctuation semantics.
+    (to get predictable behavior from TTS models)"""
     text = unicodedata.normalize("NFKC", text)
     replacements = {
         "“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "＂": '"',
@@ -44,10 +47,15 @@ def _unicode_to_ascii_punct(text: str) -> str:
 
 
 def _normalize_punctuation(text: str) -> str:
+    """ Normalize punctuation for a specific model's allowed set.
+    - Map Unicode punctuation to ASCII equivalents
+    - Drop ASCII punctuation not supported by the model
+    - Do not insert new punctuation or change spacing/grammar
+    """
     if not text:
         return text
     mapped = _unicode_to_ascii_punct(text)
-    allowed = set(string.printable)  # ElevenLabs tokenizer is robust; keep printable ASCII
+    allowed = set(string.printable)  # ElevenLabs tokenizer is robust, so we keep printable ASCII
     return "".join(ch for ch in mapped if ch in allowed)
 
 

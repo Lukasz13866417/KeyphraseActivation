@@ -1,3 +1,6 @@
+"""Driver for the Kokoro TTS engine. Made by AI.
+TODO: review this
+"""
 from __future__ import annotations
 
 import json

@@ -19,6 +19,10 @@ def _ensure_three_words(text: str) -> None:
 
 
 def _next_out_path(base_dir: Path, stem: str, ext: str = ".wav", start_idx: int = 0) -> Path:
+    """
+        Generate the path to the output file
+        (we need to find a path that doesn't already exist)
+    """
     i = start_idx
     while True:
         p = base_dir / f"{stem}_aug_{i:04d}{ext}"
@@ -42,14 +46,13 @@ def augment_one(
     max_inword_ms: int = 80,
 ) -> np.ndarray:
     """
-    Create one augmented clip from a single WAV and its normalized transcript.
-    - With probability p_trim_start/p_trim_end, remove leading/trailing silence.
-    - With probability p_crop_left/p_crop_right, crop first/last word region naturally.
-    Returns audio samples (float32) at original sample rate.
+    Randomly crop the audio to start/end mid-word while keeping the key phrase intact.
+    In the future we can use the transcript to crop the audio more precisely.
+    (more randomness but still keep the key phrase intact)
     """
     _ensure_three_words(normalized_text)
 
-    # Start from original WAV path; optionally trim silence first
+    # Sometimes we trim silence first, sometimes we don't
     do_trim_start = (random() < p_trim_start)
     do_trim_end = (random() < p_trim_end)
 
@@ -61,8 +64,7 @@ def augment_one(
             top_db=top_db if top_db != "auto" else "auto",
             fade_ms=fade_ms,
         )
-        # Save to an in-memory temporary holder by writing to a temporary file-like?
-        # Simpler: write to a NamedTemporaryFile path.
+        # Save to an in-memory temporary holder
         import tempfile
         with tempfile.NamedTemporaryFile(prefix="aug_trim_", suffix=".wav", delete=False) as tf:
             tmp_path = tf.name
@@ -143,6 +145,7 @@ def augment_batch(
     return saved
 
 
+# Simple test made by AI
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Audio augmentation pipeline for a single wav.")
     parser.add_argument("--guidance", action="store_true", help="Interactive prompts for inputs")

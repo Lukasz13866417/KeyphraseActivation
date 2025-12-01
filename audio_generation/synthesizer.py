@@ -9,7 +9,7 @@ from elevenlabs_side.driver import synthesize as eleven_synthesize
 from kokoro_side.driver import synthesize as kokoro_synthesize
 
 
-# Proportions for how many samples to generate from each TTS engine.
+# Default proportions for how many samples to generate from each TTS engine.
 PROPORTION_PIPER = 0.4
 PROPORTION_BARK = 0.1
 PROPORTION_KOKORO = 0.2
@@ -20,7 +20,7 @@ def _project_root() -> Path:
 
 
 def _distribute_counts(total: int, proportions: Dict[str, float]) -> Dict[str, int]:
-    # Initial floor allocation
+    """Distribute the total number of samples to each TTS engine according to the proportions."""
     keys = list(proportions.keys())
     counts = {k: int(total * max(0.0, proportions[k])) for k in keys}
     allocated = sum(counts.values())
@@ -49,8 +49,7 @@ def generate_for_phrase(
     eleven_kwargs: Optional[dict] = None,
 ) -> List[dict]:
     """
-    Generate samples for the same phrase using Piper, Bark, and ElevenLabs according
-    to the configured proportions. Returns a combined list of JSON records from drivers.
+    Generate samples for the same phrase using all TTS engines. Returns a combined list of JSON records from drivers.
     """
     if not phrase or not phrase.strip():
         raise ValueError("Phrase must be non-empty.")

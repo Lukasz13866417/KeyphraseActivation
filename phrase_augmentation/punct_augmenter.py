@@ -1,12 +1,13 @@
 from typing import Generator
 from random import choice, seed, random
 from wordfreq import top_n_list, iter_wordlist
-
-seed(12345) # for reproducibility
+from words_augmenter import add_words_between_words
 
 PUNCTUATION = [".", ",", "!", "?", "?!"]
 
 def add_punct(phrase: str, count: int, replace_existing: bool = False) -> Generator[str, None, None]:
+    """Add punctuation to a phrase.
+    """
     places = phrase.split(" ")
     for _ in range(count):
         res = ""

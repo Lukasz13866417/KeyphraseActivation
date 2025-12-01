@@ -44,8 +44,7 @@ def sub_cost(a,b):
     return 1.0
 
 def phoneme_edit_distance(a, b):
-    # RapidFuzz's Levenshtein doesn't support a matrix; do a tiny custom DP.
-    # a,b are tuples of phones.
+    # Simple custom dynamic programming algo for edit distance of strings of phonemes.
     la, lb = len(a), len(b)
     dp = list(range(lb+1))
     for i in range(1, la+1):
@@ -63,6 +62,7 @@ def phoneme_edit_distance(a, b):
     return dp[-1]
 
 class ConfuserIndex:
+    """Index of phrases for nearest confusers."""
     def __init__(self, phrases):
         self.phrases = list(phrases)
         self.meta_index = defaultdict(list)     # metaphone token -> [ids]

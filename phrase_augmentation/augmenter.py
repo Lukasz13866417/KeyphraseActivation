@@ -24,19 +24,15 @@ def _nearest_confusers_for_word(
     max_candidates: int = 5000,
     top_k: int = 30,
 ) -> List[str]:
-    """Return up to top_k words from the base that are phonetically closest to the given word."""
+    """Return up to top_k words from the base that are phonetically closest to the given word.
+    When possible, we use phoneme-distance based nearest. Otherwise, we fall back to string-level algorithms."""
     if not word:
         return []
-    # Sample the base to keep it fast
     candidates = list(word_base[:max_candidates]) if len(word_base) >= max_candidates else list(word_base)
-    # If the list is too big, sub-sample randomly
     if len(candidates) > max_candidates:
         candidates = sample(candidates, k=max_candidates)
-    # Remove the original word (exact match)
     wl = word.lower()
-    candidates = [w for w in candidates if w.lower() != wl]
-    # Compute phoneme distance
-    # First try phoneme-distance based nearest
+    candidates = [w for w in candidates if w.lower() != wl] # Remove the original word (exact match)
     scored: List[Tuple[float, str]] = []
     try:
         w_phones = phrase_phonemes(word)
@@ -143,6 +139,7 @@ def generate_inbetween(
 ) -> List[str]:
     """
     Insert 1–2 words in random gaps of the key phrase; optionally use confuser words (phonetically close to neighbors).
+    This is used to generate in-between phrases that are not too similar to the key phrase.
     """
     words = [w for w in key_phrase.strip().split() if w]
     if len(words) < 2:
@@ -156,9 +153,7 @@ def generate_inbetween(
         for gi in range(num_gaps):
             insert_here = (gi == forced_gap) or (gi > forced_gap and random() < 0.5)
             if insert_here:
-                # Decide how many insertions at this gap, capped
                 if gi == forced_gap:
-                    # ensure at least one at the forced gap
                     base_inserts = 1 + (1 if random() < 0.5 else 0)
                 else:
                     base_inserts = 1 if random() < 0.5 else 0
@@ -167,7 +162,6 @@ def generate_inbetween(
                 n_ins = max(1 if gi == forced_gap else 0, min(max_inserts_per_gap, base_inserts))
                 for _k in range(n_ins):
                     if random() < confuser_inbetween_prob:
-                        # pick confuser for the nearer neighbor word
                         neighbor = words[gi] if random() < 0.5 else words[gi + 1]
                         confs = _nearest_confusers_for_word(neighbor, word_base=base, top_k=per_word_topk)
                         tok = choice(confs) if confs else choice(base)

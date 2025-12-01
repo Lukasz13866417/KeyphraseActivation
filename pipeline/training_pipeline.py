@@ -129,8 +129,8 @@ def _train_model(
     progress_callback: Optional[ProgressCallback],
 ) -> Tuple[List[Tuple[int, float, float, float]], Path]:
     spect_cfg = SpectrogramConfig()
-    train_ds = AudioDataset(train_df, spect_cfg)
-    val_ds = AudioDataset(val_df, spect_cfg)
+    train_ds = AudioDataset(train_df, spect_cfg, augment=True)
+    val_ds = AudioDataset(val_df, spect_cfg, augment=False)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=_collate_batch)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=_collate_batch)

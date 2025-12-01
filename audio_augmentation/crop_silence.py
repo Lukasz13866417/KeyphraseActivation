@@ -11,8 +11,10 @@ def estimate_top_db(
     hop_length: int = 512,
     percentile: float = 0.10,   # bottom 10%
     margin_db: float = 6.0,     # how much above the floor we gate
-    region: str = "global",     # "global" | "sides"
+    region: str = "global",     # "global" or "sides"
 ) -> float:
+    """ Returns estimated maximum dB level. Can be used to determine which frames are silent (by contrast).
+    """
     # Compute RMS
     rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
     rms = rms[np.isfinite(rms)]
@@ -40,6 +42,7 @@ def estimate_top_db(
     return top_db
     
 def _nearest_zero_cross(y: np.ndarray, sidx: int, max_search: int) -> int:
+    """ Simple binary search to find first zero crossing in either direction in a continuous function."""
     lo = max(1, sidx - max_search)
     hi = min(len(y) - 1, sidx + max_search)
     best = sidx
@@ -65,7 +68,7 @@ def crop_silence(
 ) -> Tuple[np.ndarray, int]:
     """
     Remove leading and/or trailing silence from a WAV file.
-    Snap cut points to nearest zero crossing and add a short fade in/out.
+    Cut points are snapped to nearest zero crossing and a short fade in/out is applied.
     """
     y, sr = librosa.load(wav_path, sr=None, mono=True)
     if isinstance(top_db, str) and top_db.lower() == "auto":
@@ -113,7 +116,7 @@ def crop_silence(
 
     return y_crop, sr
 
-
+# Simple test made by AI
 if __name__ == "__main__":
     wav = input("Enter path to WAV file: ").strip()
     ans_l = (input("Trim start? [Y/n]: ").strip() or "y").lower()

@@ -12,8 +12,9 @@ import random
 import re
 from collections import defaultdict
 from functools import lru_cache
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
+# TODO add more excerpts
 _DEFAULT_EXCERPTS: Tuple[str, ...] = (
     (
         "It is a truth universally acknowledged, that a single man in possession of "
@@ -99,13 +100,7 @@ def generate_plain_negatives(
 ) -> List[str]:
     """
     Generate up to `n` phrases that intentionally avoid `key_phrase`.
-
-    Args:
-        n: Number of phrases to return.
-        key_phrase: Phrase to avoid (case-insensitive).
-        k: Markov chain order (k-gram). Higher values => more coherent, less random.
-        max_words: Maximum length of generated phrase.
-        sources: Optional iterable of custom text sources. Falls back to built-ins.
+    It's a k-gram (markov chain babble)
     """
     if n <= 0:
         return []

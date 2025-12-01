@@ -4,6 +4,9 @@ from typing import Tuple
 
 
 def _features(y: np.ndarray, sr: int, hop: int = 512) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """ Compute useful values for audio signal:
+        onset strength, energy, and zero-crossing rate features.
+    """
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
     energy = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop)[0]
     zcr = librosa.feature.zero_crossing_rate(y, frame_length=1024, hop_length=hop)[0]
@@ -12,6 +15,10 @@ def _features(y: np.ndarray, sr: int, hop: int = 512) -> Tuple[np.ndarray, np.nd
 
 
 def _peak_pick(envelope: np.ndarray) -> np.ndarray:
+    """ Find local maxima in an audio envelope 
+    (envelope = discrete sequence that says how strong the audio is at each point in time).
+    Local maxima are likely to be starts of syllables in synthetic speech.
+    """
     if envelope.size == 0:
         return np.array([], dtype=int)
     return librosa.util.peak_pick(
@@ -23,15 +30,8 @@ def _peak_pick(envelope: np.ndarray) -> np.ndarray:
     )
 
 
-def _snap_energy_min(idx: int, energy: np.ndarray, win: int = 8) -> int:
-    a = max(0, idx - win)
-    b = min(len(energy), idx + win + 1)
-    if b <= a + 1:
-        return int(np.clip(idx, 0, len(energy) - 1))
-    return a + int(np.argmin(energy[a:b]))
-
-
 def _nearest_zero_cross(y: np.ndarray, sidx: int, max_search: int) -> int:
+    """ Simple binary search to find first zero crossing in either direction in a continuous function."""
     lo = max(1, sidx - max_search)
     hi = min(len(y) - 1, sidx + max_search)
     best = sidx
@@ -45,30 +45,6 @@ def _nearest_zero_cross(y: np.ndarray, sidx: int, max_search: int) -> int:
     return best
 
 
-def _nearest_zero_cross_dir(y: np.ndarray, sidx: int, max_search: int, direction: str) -> int:
-    """
-    Search for a zero-cross :
-    - 'left'  -> search backward first to favor earlier cut
-    - 'right' -> search forward first to favor later cut
-    - other   -> nearest zero crossing in either direction
-    """
-    n = len(y)
-    sidx = int(np.clip(sidx, 1, n - 1))
-    if direction == "left":
-        lo = max(1, sidx - max_search)
-        for i in range(sidx, lo - 1, -1):
-            if (y[i - 1] <= 0.0 <= y[i]) or (y[i - 1] >= 0.0 >= y[i]):
-                return i
-        return _nearest_zero_cross(y, sidx, max_search)
-    if direction == "right":
-        hi = min(n - 1, sidx + max_search)
-        for i in range(sidx, hi):
-            if (y[i - 1] <= 0.0 <= y[i]) or (y[i - 1] >= 0.0 >= y[i]):
-                return i
-        return _nearest_zero_cross(y, sidx, max_search)
-    return _nearest_zero_cross(y, sidx, max_search)
-
-
 def _natural_cut_sample(
     y: np.ndarray,
     sr: int,
@@ -79,6 +55,11 @@ def _natural_cut_sample(
     zero_search_ms: int = 8,
     target_jitter_frames: int = 12,
 ) -> int:
+    """ Cut an audio sample at a point around the provided timestamp, but with enhancements:
+    - jitter the timestamp a bit to allow for some randomness (useful in training)
+    - pick a nearby point which is very quiet (energy-wise)
+    - snap to zero crossing to decrease likelihood of cutting into a word AND to make the sample start from 0 pressure
+    """
     # Jitter the target a bit (+- target_jitter_frames frames) to avoid locking onto the same valley every time
     target_frame = int(np.clip(round(target_sample / hop), 0, len(energy) - 1))
     jf = max(0, int(target_jitter_frames))
@@ -129,10 +110,14 @@ def crop_audio(
 ) -> Tuple[np.ndarray, int]:
     """
     Smartly crop a WAV to start/end mid-word while keeping the key phrase intact.
-    - spoken_text must have at least 3 words (heuristic expectation).
+    !!!We assume the first and last words of the text dont belong to the keyphrase.!!!
+    This will be used in positive tests that contain keyphrase plus some words before and after it.
+    - spoken_text must have at least 3 words 
     - If crop_left: remove a random prefix from the first word (do not extend into the second word).
-    - If crop_right: remove a random suffix from the last word (do not extend into the penultimate word).
-    Implementation uses onset/energy and snaps to low-energy + zero crossings.
+    - If crop_right: remove a random suffix from the last word (do not extend into the last word of keyphrase).
+    We use onset/energy and snap to low-energy + zero crossings to find the best cut points.
+    (zero crossings are used to make the sample start from 0 pressure, so no "clicks" are heard)
+    We assume that words correspond to peaks in the onset envelope (rapid changes in pressure).
     """
     words = [w for w in spoken_text.strip().split() if w]
     if len(words) < 3:
@@ -153,7 +138,7 @@ def crop_audio(
     else:
         left_limit_frame = max(1, int(0.2 * frames))
 
-    # Right: limit from end to after penultimate peak or last 25% window
+    # Right: limit from end to after second-to-last peak or last 25% window
     if peaks.size >= 2:
         right_limit_from_end_frame = max(1, min(int(0.25 * frames), int(frames - 1 - peaks[-2])))
     elif peaks.size == 1:
@@ -184,7 +169,8 @@ def crop_audio(
     if crop_left and rng_left_max > min_crop_samples:
         left_cap = min(rng_left_max, first_onset_sample + inword_cap_samples)
         raw_cut = np.random.randint(min_crop_samples, max(min_crop_samples + 1, left_cap + 1))
-        # Bias target earlier by subtracting extra random frames to ensure only-left movement
+        # We subtract extra random frames to make better randomization
+        # (left crop is more likely to be at the start of the word than at the end)
         raw_cut_frames = raw_cut // hop
         bias_frames = np.random.randint(0, frame_jitter + 1)
         raw_cut_biased = max(0, (raw_cut_frames - bias_frames) * hop)
@@ -198,7 +184,8 @@ def crop_audio(
         max_remove_allowed = max(0, n - (last_onset_sample + inword_cap_samples))
         right_cap = min(rng_right_max, max_remove_allowed)
         raw_cut_from_end = np.random.randint(min_crop_samples, max(min_crop_samples + 1, right_cap + 1))
-        # Bias target later by adding extra random frames to ensure only-right movement
+        # We add extra random frames to make better randomization
+        # (right crop is more likely to be at the end of the word than at the start)
         raw_end_frames = raw_cut_from_end // hop
         bias_frames = np.random.randint(0, frame_jitter + 1)
         raw_end_biased = (raw_end_frames + bias_frames) * hop

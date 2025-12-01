@@ -1,13 +1,16 @@
+"""
+Finds the timestamps of a keyphrase in an audio file, given the transcript (making this much easier).
+Based on torchaudio CTC segmentation tutorial.
+This will be necessary to reuse existing audio samples as positives for training (those that contain the keyphrase).
+""" 
+
+# TODO use the _natural_cut_sample function to crop cleanly (will help account for model's imperfections).
 import re
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import torch
 import torchaudio
-
-# -----------------------
-# Internal helpers / setup
-# -----------------------
 
 # Use GPU if available, otherwise CPU.
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,7 +103,7 @@ def _get_trellis(
     blank_id: int,
 ) -> torch.Tensor:
     """
-    Build the trellis matrix as in the torchaudio CTC segmentation tutorial.
+    Build the trellis matrix as in the tutorial.
 
     emission: [num_frames, num_labels]
     tokens: list of label indices corresponding to each character in normalized transcript
@@ -227,10 +230,6 @@ def _find_subsequence(haystack: List[str], needle: List[str]) -> int:
     raise ValueError("Keyphrase not found in transcript (after normalization).")
 
 
-# -----------------------
-# Public function
-# -----------------------
-
 def find_keyphrase_timestamps(
     wav_path: str,
     transcript: str,
@@ -247,28 +246,28 @@ def find_keyphrase_timestamps(
     Returns:
         (start_time_seconds, end_time_seconds)
     """
-    # 1) Normalize transcript and keyphrase into model's char space
+    # Normalize transcript and keyphrase into model's char space
     norm_transcript = _normalize_transcript(transcript)
     norm_keyphrase = _normalize_transcript(keyphrase)
 
     full_words = norm_transcript.split("|")
     key_words = norm_keyphrase.split("|")
 
-    # 2) Get emissions from audio
+    # Get emissions from audio
     emission, num_samples, sample_rate = _get_emission(wav_path)
     model, labels, dictionary, blank_id = _load_model()
 
-    # 3) Convert normalized transcript to label IDs
+    # Convert normalized transcript to label IDs
     try:
         tokens = [dictionary[c] for c in norm_transcript]
     except KeyError as e:
         raise ValueError(f"Character {e} in normalized transcript is not in model vocabulary.") from e
 
-    # 4) CTC segmentation: trellis + backtrack
+    # CTC segmentation
     trellis = _get_trellis(emission, tokens, blank_id=blank_id)
     path = _backtrack(trellis, emission, tokens, blank_id=blank_id)
 
-    # 5) Merge to char segments then word segments
+    # Merge to char segments then word segments
     char_segments = _merge_repeats(path, norm_transcript)
     word_segments = _merge_words(char_segments, separator="|")
 
@@ -276,21 +275,20 @@ def find_keyphrase_timestamps(
     aligned_words = [seg.label for seg in word_segments]
     if aligned_words != full_words:
         # Not necessarily fatal, but useful to know if it goes weird
-        # You could log or print this instead of raising if you want.
         raise RuntimeError(
             "Aligned words differ from normalized transcript words.\n"
             f"Transcript words: {full_words}\n"
             f"Aligned words:    {aligned_words}"
         )
 
-    # 6) Locate keyphrase as contiguous word subsequence
+    # Locate keyphrase as contiguous word subsequence
     start_word_idx = _find_subsequence(aligned_words, key_words)
     end_word_idx = start_word_idx + len(key_words) - 1
 
     first_seg = word_segments[start_word_idx]
     last_seg = word_segments[end_word_idx]
 
-    # 7) Convert frame indices to seconds
+    # Convert frame indices to seconds
     num_frames = emission.size(0)
     audio_duration_sec = num_samples / float(sample_rate)
     time_per_frame = audio_duration_sec / num_frames
@@ -301,7 +299,62 @@ def find_keyphrase_timestamps(
     return start_time_sec, end_time_sec
 
 
-# Optional: tiny CLI demo
+def find_keyphrase_segment_with_margin(
+    wav_path: str,
+    transcript: str,
+    keyphrase: str,
+    *,
+    pre_padding_sec: float = 0.15,
+    post_padding_sec: float = 0.15,
+    min_duration_sec: float = 0.6,
+    max_duration_sec: Optional[float] = None,
+) -> Tuple[float, float]:
+    """
+    Return a slightly longer segment that contains the keyphrase plus some part of surrounding words
+    (to resemble other positives more).
+
+    Args:
+        wav_path: Path to the audio file.
+        transcript: Transcript matching the audio.
+        keyphrase: Phrase to locate.
+        pre_padding_sec: Seconds to include before the detected start.
+        post_padding_sec: Seconds to include after the detected end.
+        min_duration_sec: Ensure the final window is at least this long (if possible).
+        max_duration_sec: Cap the window length (if provided).
+    """
+    start, end = find_keyphrase_timestamps(wav_path, transcript, keyphrase)
+    if end <= start:
+        return start, end
+
+    info = torchaudio.info(wav_path)
+    total_duration = info.num_frames / float(info.sample_rate)
+
+    start = max(0.0, start - max(0.0, pre_padding_sec))
+    end = min(total_duration, end + max(0.0, post_padding_sec))
+
+    if min_duration_sec and (end - start) < min_duration_sec:
+        deficit = min_duration_sec - (end - start)
+        shift = deficit / 2.0
+        start = max(0.0, start - shift)
+        end = min(total_duration, end + shift)
+        # If still too short due to hitting boundaries, stretch to min duration where possible.
+        if (end - start) < min_duration_sec and total_duration >= min_duration_sec:
+            if start == 0.0:
+                end = min(total_duration, min_duration_sec)
+            elif end == total_duration:
+                start = max(0.0, total_duration - min_duration_sec)
+
+    if max_duration_sec and (end - start) > max_duration_sec:
+        center = 0.5 * (start + end)
+        half = max_duration_sec / 2.0
+        start = max(0.0, center - half)
+        end = min(total_duration, center + half)
+        if (end - start) > max_duration_sec + 1e-6:
+            end = min(total_duration, start + max_duration_sec)
+
+    return start, end
+
+
 if __name__ == "__main__":
     import sys
 

@@ -7,6 +7,7 @@ seed(12345) # for reproducibility
 WORDS = top_n_list("en", 100_000)
 
 def add_words_between_words(phrase: str, count: int) -> Generator[str, None, None]:
+    """ Insert random words between words in a phrase."""
     words = phrase.split(" ")
     # If there are no gaps, just yield the original phrase
     if len(words) < 2:
