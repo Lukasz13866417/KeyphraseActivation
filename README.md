@@ -88,9 +88,7 @@ I have put a significant amount of effort to reuse as much of the data as possib
 > If docker compose/build cant run, try running with sudo
 - **Build the image**
   - `docker build -t keyphrase-activation .`
-
 - **Use docker compose**
-> Audio samples, artifacts, database entries should persist.
   - For Django UI: `docker compose up web`
     - Open <http://127.0.0.1:8000> to test. 
   - For CLI: `docker compose run --rm cli`
