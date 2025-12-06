@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_MODE: web
+      PORT: 8000
+      RUN_MIGRATIONS: "1"
+      DJANGO_SQLITE_PATH: /app/storage/webui.sqlite3
+    volumes:
+      - samples_data:/app/samples
+      - artifacts_data:/app/artifacts
+      - audio_db_data:/app/db
+      - webui_db_data:/app/storage
+    restart: unless-stopped
+
+  cli:
+    build: .
+    command: cli
+    environment:
+      APP_MODE: cli
+      RUN_MIGRATIONS: "0"
+      DJANGO_SQLITE_PATH: /app/storage/webui.sqlite3
+    volumes:
+      - samples_data:/app/samples
+      - artifacts_data:/app/artifacts
+      - audio_db_data:/app/db
+      - webui_db_data:/app/storage
+    stdin_open: true
+    tty: true
+
+volumes:
+  samples_data:
+  artifacts_data:
+  audio_db_data:
+  webui_db_data:
+

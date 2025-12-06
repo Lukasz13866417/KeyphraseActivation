@@ -84,3 +84,20 @@ I have put a significant amount of effort to reuse as much of the data as possib
   - From repo root: `python main.py`
   - Enter a keyphrase when prompted; the script will generate data, train, and print final metrics + model path.
 
+## Docker setup
+> If docker compose/build cant run, try running with sudo
+- **Build the image**
+  - `docker build -t keyphrase-activation .`
+
+- **Use docker compose**
+> Audio samples, artifacts, database entries should persist.
+  - For Django UI: `docker compose up web`
+    - Open <http://127.0.0.1:8000> to test. 
+  - For CLI: `docker compose run --rm cli`
+    - Opens an interactive shell inside the container, so you can follow the usual `main.py` prompts.
+
+- **Environment & volumes**
+  - `docker/entrypoint.sh` automatically initializes the audio DB and (optionally) runs Django migrations.
+  - Volumes defined in `docker-compose.yml` keep `samples/`, `artifacts/`, the audio SQLite DB (`db/`), and the Django DB (`/app/storage/webui.sqlite3`) persistent across container restarts.
+  - run `docker compose run -e ELEVENLABS_API_KEY=...` to be able to use elevenlabs. Tests from this TTS are very useful and models generalize better with them.
+

@@ -1,7 +1,7 @@
 from typing import Generator
 from random import choice, seed, random
 from wordfreq import top_n_list, iter_wordlist
-from words_augmenter import add_words_between_words
+from phrase_augmentation.words_augmenter import add_words_between_words
 
 PUNCTUATION = [".", ",", "!", "?", "?!"]
 

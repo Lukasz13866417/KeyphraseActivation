@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,10 +47,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "webui.wsgi.application"
 
+default_sqlite_path = os.getenv("DJANGO_SQLITE_PATH")
+sqlite_name = Path(default_sqlite_path) if default_sqlite_path else BASE_DIR / "webui.sqlite3"
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": str(BASE_DIR / "webui.sqlite3"),
+        "NAME": str(sqlite_name),
     }
 }
 
