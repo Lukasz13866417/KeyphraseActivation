@@ -19,8 +19,8 @@ The core model is a small convolutional–recurrent network connected to MLP to 
   - `AudioDataset` (in `model/dataset.py`) loads audio paths, resamples, builds spectrograms, and yields `(spec, label)` pairs.
   - `pipeline/training_pipeline.py` wraps the whole process (data generation -> dataset -> training -> saving a `.pt` file).
 - **Entry points**:
-  - CLI: `uv run main.py` prompts for a keyphrase, generates data, trains, and prints metrics.
-  - Web UI: `uv run webui/manage.py runserver` starts the Django app where you can enter a phrase and download the trained model.
+  - CLI: prompts for a keyphrase, generates data, trains, and prints metrics.
+  - Web UI: Django app where you can enter a phrase and download the trained model.
 
 # Dataset
 
@@ -55,7 +55,24 @@ I have put a significant amount of effort to reuse as much of the data as possib
 # Project structure
 - To avoid dependency issues, major sub-projects (subfolders of `audio_generation` that use TTS engines, also `data_generation/keyword_finding`) are separate projects that communicate with the main one using driver scripts (using `subprocess` library)
 
-# Setup
+## Docker setup
+> If docker compose/build cant run, try running with sudo
+- **Build the image**
+  - `docker build -t keyphrase-activation .`
+- **Use docker compose**
+  - For Django UI: `docker compose up web`
+    - Open <http://127.0.0.1:8000> to test. 
+  - For CLI: `docker compose run --rm cli`
+    - Opens an interactive shell inside the container, so you can follow the usual `main.py` prompts.
+
+- **Environment & volumes**
+  - `docker/entrypoint.sh` automatically initializes the audio DB and (optionally) runs Django migrations.
+  - Volumes defined in `docker-compose.yml` keep `samples/`, `artifacts/`, the audio SQLite DB (`db/`), and the Django DB (`/app/storage/webui.sqlite3`) persistent across container restarts.
+  - run `docker compose run -e ELEVENLABS_API_KEY=...` to be able to use elevenlabs. Tests from this TTS are very useful and models generalize better with them.
+
+
+
+# Setup without Docker:
 
 - **Create Python env & install deps**
   - `python3 -m venv .venv && source .venv/bin/activate`
@@ -81,21 +98,6 @@ I have put a significant amount of effort to reuse as much of the data as possib
   - Open `http://127.0.0.1:8000` in your browser, enter a keyphrase, start a run, then download the model once training completes.
 
 - **Run the CLI pipeline instead (no UI)**
-  - From repo root: `python main.py`
-  - Enter a keyphrase when prompted; the script will generate data, train, and print final metrics + model path.
-
-## Docker setup
-> If docker compose/build cant run, try running with sudo
-- **Build the image**
-  - `docker build -t keyphrase-activation .`
-- **Use docker compose**
-  - For Django UI: `docker compose up web`
-    - Open <http://127.0.0.1:8000> to test. 
-  - For CLI: `docker compose run --rm cli`
-    - Opens an interactive shell inside the container, so you can follow the usual `main.py` prompts.
-
-- **Environment & volumes**
-  - `docker/entrypoint.sh` automatically initializes the audio DB and (optionally) runs Django migrations.
-  - Volumes defined in `docker-compose.yml` keep `samples/`, `artifacts/`, the audio SQLite DB (`db/`), and the Django DB (`/app/storage/webui.sqlite3`) persistent across container restarts.
-  - run `docker compose run -e ELEVENLABS_API_KEY=...` to be able to use elevenlabs. Tests from this TTS are very useful and models generalize better with them.
+  - From repo root: `uv run main.py`
+  - Enter a keyphrase when prompted. The script will generate data, train, and print final metrics + model path.
 
