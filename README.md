@@ -26,9 +26,19 @@ The core model is a small convolutional–recurrent network connected to MLP to 
 
 Some audio data is synthesized on the fly and cached in an **SQLite database** for reuse.<br>
 A large portion is reused to speed up user experience
+## Generation
+- Publicly available speech datasets
+  - The People's Speech
+  - In the future, will add more, e.g. AMI Meeting Corpus
+- TTS tools
+  - Piper (local inference)
+  - Suno Bark (local inference),
+  - Kokoro TTS (local inference),
+  - ElevenLabs (via paid API)
 ## Reusing
 I have put a significant amount of effort to reuse as much of the data as possible. <br>
-- With SQL I find samples containing the keyphrase. Knowing the transcripts for everything, I use CTC segmentation (publicly available lightweight model) to find they keyphrase in audio and feed it to the dataset.
+- With SQL I find samples containing the keyphrase. 
+- Knowing the transcripts for everything, I use CTC segmentation (publicly available lightweight model) to find they keyphrase in audio and feed it to the dataset.
 - Naturally I can find many more negatives, so most negatives are already present in the database (**except for confusers**)
 
 ## Data generation
@@ -83,8 +93,7 @@ I have put a significant amount of effort to reuse as much of the data as possib
 - **Initialize uv environment**
   - If you need Python locally: `uv python install 3.12`
   - Create a project venv (once): `uv venv .venv`
-  - Activate when desired: `source .venv/bin/activate`  
-    (optional; all commands below also work with `uv run ...` without manual activation)
+  - Activate venv: `source .venv/bin/activate`  
 
 - **Install project dependencies**
   - `uv pip sync requirements.txt` (uses the pinned file)
@@ -93,7 +102,7 @@ I have put a significant amount of effort to reuse as much of the data as possib
 - **Initialize the audio samples database**
   - `sqlite3 db/db.sqlite3 < db/db.sql`
 
-- **(Optional) ElevenLabs TTS API key**
+- **(Optional but very useful) ElevenLabs TTS API key**
   - This is only needed if you want premium TTS as part of data generation.
   - Create `.env` with your API key:
     - `cd audio_generation/elevenlabs_side/internals`
