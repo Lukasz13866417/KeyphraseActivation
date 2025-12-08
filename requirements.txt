@@ -14,3 +14,4 @@ torchaudio
 pandas
 torchcodec
 Django>=5.1
+pytest>=8.3.0

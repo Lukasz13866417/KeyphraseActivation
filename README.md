@@ -72,14 +72,25 @@ I have put a significant amount of effort to reuse as much of the data as possib
 
 
 
-# Setup without Docker:
+# Prerequisites
+- **uv** (Python package manager): `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- **Audio/system libs**: `sudo apt update && sudo apt install ffmpeg libsndfile1 sqlite3`
+- **Python 3.12** with `python3.12-venv` / `python3.12-dev`
+  - `sudo apt install python3.12 python3.12-venv python3.12-dev`
 
-- **Create Python env & install deps**
-  - `python3 -m venv .venv && source .venv/bin/activate`
-  - `pip install -r requirements.txt`
+# Setup without Docker (uv)
+
+- **Initialize uv environment**
+  - If you need Python locally: `uv python install 3.12`
+  - Create a project venv (once): `uv venv .venv`
+  - Activate when desired: `source .venv/bin/activate`  
+    (optional; all commands below also work with `uv run ...` without manual activation)
+
+- **Install project dependencies**
+  - `uv pip sync requirements.txt` (uses the pinned file)
+  - To add extras later: `uv add <package>` or `uv add --dev <package>`
 
 - **Initialize the audio samples database**
-  - `sudo apt install sqlite3`
   - `sqlite3 db/db.sqlite3 < db/db.sql`
 
 - **(Optional) ElevenLabs TTS API key**
@@ -91,13 +102,16 @@ I have put a significant amount of effort to reuse as much of the data as possib
 
 - **Prepare Django web UI database**
   - `cd webui`
-  - `python manage.py migrate`
+  - `uv run python manage.py migrate`
 
 - **Run the web UI**
-  - From repo root (venv active): `python webui/manage.py runserver`
+  - From repo root: `uv run python webui/manage.py runserver`
   - Open `http://127.0.0.1:8000` in your browser, enter a keyphrase, start a run, then download the model once training completes.
 
 - **Run the CLI pipeline instead (no UI)**
-  - From repo root: `uv run main.py`
+  - From repo root: `uv run python main.py`
   - Enter a keyphrase when prompted. The script will generate data, train, and print final metrics + model path.
+
+- **Run the test suite**
+  - `uv run pytest`
 
