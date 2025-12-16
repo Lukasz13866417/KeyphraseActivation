@@ -1,6 +1,6 @@
 # Phrase recognition service Django MLaaS
 > features ML **deep neural network design** + lots of audio processing e.g. words to phonemes, editing audio clips, **CTC segmentation** to extract clips words from audio, **data engineering** to train well generalized models using automatically generated data.
-> **WARNING: Without a large base of samples existing upfront, the app will have to generate more samples for each query, so it will be very very slow.**
+> <br>**WARNING: Without a large base of samples existing upfront, the app will have to generate more samples for each query, so it will be very very slow.**
 ### - User enters phrase. 
 ### - The backend trains a lightweight AI to detect the phrase in audio. 
 ### - Training is finished ->  user can download trained model
