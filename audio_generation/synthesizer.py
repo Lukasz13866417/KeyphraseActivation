@@ -10,9 +10,9 @@ from kokoro_side.driver import synthesize as kokoro_synthesize
 
 
 # Default proportions for how many samples to generate from each TTS engine.
-PROPORTION_PIPER = 0.4
-PROPORTION_BARK = 0.1
-PROPORTION_KOKORO = 0.2
+PROPORTION_PIPER = 0.5
+PROPORTION_BARK = 0.0
+PROPORTION_KOKORO = 0.5
 PROPORTION_ELEVEN = 1.0 - PROPORTION_PIPER - PROPORTION_BARK - PROPORTION_KOKORO
 
 def _project_root() -> Path:

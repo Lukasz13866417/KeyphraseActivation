@@ -12,8 +12,6 @@ import threading
 from pathlib import Path
 from typing import List, Tuple, Optional
 
-import soundfile as sf
-
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -145,6 +143,13 @@ def extract_keyphrase_audio(
         end_sec: End time in seconds
         output_path: Path to save the extracted segment
     """
+    try:
+        import soundfile as sf  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(
+            "extract_keyphrase_audio requires the 'soundfile' package. "
+            "Install it (and libsndfile) or disable positive clipping."
+        ) from exc
     audio, sample_rate = sf.read(audio_path)
     
     # Convert seconds to sample indices

@@ -5,19 +5,17 @@ import random
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# TTS drivers
-from audio_generation.piper_side.driver import synthesize as piper_synthesize
-from audio_generation.suno_side.driver import synthesize as bark_synthesize
-from audio_generation.kokoro_side.driver import synthesize as kokoro_synthesize
-from audio_generation.elevenlabs_side.driver import synthesize as eleven_synthesize
-from audio_generation.tps_side.tps_generator import get_wavs_from_tps
+# NOTE: Heavy dependencies (TTS drivers, TPS, torchaudio-based keyphrase finding)
+# are imported lazily inside the functions that need them, so DB planning/progress
+# updates can be emitted quickly.
 
 # Text augmentation
 from phrase_augmentation.augmenter import generate_augmented_phrases
@@ -25,12 +23,15 @@ from phrase_augmentation.util import get_word_base
 from phrase_augmentation.punct_augmenter import add_punct
 
 from db import db_api
-from data_generation.keyphrase_finding.driver import extract_keyphrase_audio
-from data_generation.keyphrase_finding.internal.finder import (
-    find_keyphrase_segment_with_margin,
-)
 
 API_ORDER = ("piper", "bark", "kokoro", "eleven")
+CATEGORY_LABELS = {
+    "positives": "Positives",
+    "confusers": "Confusers",
+    "inbetween": "In-between",
+    "plain_negatives": "Plain Negatives",
+    "tps_random": "TPS Samples",
+}
 _NONWORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _WHITESPACE_RE = re.compile(r"\s+")
 _DB_READY = False
@@ -40,6 +41,119 @@ _MIN_POSITIVE_SEGMENT_SEC = float(os.getenv("AUDIO_GEN_MIN_POSITIVE_SEGMENT_SEC"
 _KEYPHRASE_PAD_PRE_SEC = float(os.getenv("AUDIO_GEN_KEYPHRASE_PAD_PRE_SEC", "0.15"))
 _KEYPHRASE_PAD_POST_SEC = float(os.getenv("AUDIO_GEN_KEYPHRASE_PAD_POST_SEC", "0.15"))
 _REUSED_CLIP_SUBDIR = os.getenv("AUDIO_GEN_REUSED_CLIP_SUBDIR", "reused_clips")
+
+
+@dataclass
+class GenerationPlan:
+    key_phrase: str
+    key_norm: str
+    requirements: Dict[str, int]
+    per_api_counts: Dict[str, int]
+    sample_multiplier: int
+    category_phrases: Dict[str, List[str]]
+    sample_requirements: Dict[str, int]
+    existing_records: Dict[str, List[dict]]
+    growth_constant: int
+    num_tps_random: int
+    progress_summary: Dict[str, Dict[str, Any]]
+
+
+GenerationProgressCallback = Callable[[Dict[str, Any]], None]
+
+
+def _count_by_api(records: Sequence[dict]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for rec in records or []:
+        api = (rec.get("api_name") or "unknown").strip().lower() if isinstance(rec, dict) else "unknown"
+        counts[api] = counts.get(api, 0) + 1
+    return counts
+
+
+def _build_generation_setup(
+    key_phrase: str,
+    *,
+    num_confusers: int,
+    num_positives: int,
+    num_inbetween: int,
+    num_plain_negatives: int,
+    num_piper_per: int,
+    num_bark_per: int,
+    num_kokoro_per: int,
+    num_eleven_per: int,
+    confuser_inbetween_prob: float,
+    p_pos_extra_start: float,
+    p_pos_extra_end: float,
+    max_inserts_per_gap: int,
+    growth_constant: int,
+) -> Tuple[
+    Dict[str, int],
+    int,
+    Dict[str, int],
+    Dict[str, List[str]],
+    Dict[str, int],
+]:
+    per_api_counts = {
+        "piper": max(0, int(num_piper_per)),
+        "bark": max(0, int(num_bark_per)),
+        "kokoro": max(0, int(num_kokoro_per)),
+        "eleven": max(0, int(num_eleven_per)),
+    }
+    samples_per_phrase = sum(per_api_counts.values())
+    sample_multiplier = samples_per_phrase if samples_per_phrase > 0 else 1
+
+    requirements = {
+        "positives": max(0, int(num_positives)),
+        "confusers": max(0, int(num_confusers)),
+        "inbetween": max(0, int(num_inbetween)),
+        "plain_negatives": max(0, int(num_plain_negatives)),
+    }
+
+    aug = generate_augmented_phrases(
+        key_phrase=key_phrase,
+        num_confusers=max(1, requirements["confusers"]),
+        num_positives=max(1, requirements["positives"]),
+        num_inbetween=max(1, requirements["inbetween"]),
+        confuser_inbetween_prob=confuser_inbetween_prob,
+        p_pos_extra_start=p_pos_extra_start,
+        p_pos_extra_end=p_pos_extra_end,
+        max_inserts_per_gap=max_inserts_per_gap,
+    )
+
+    def _merge_phrases(primary: str, extras: Sequence[str]) -> List[str]:
+        seen: set[str] = set()
+        merged: List[str] = []
+        for candidate in [primary, *extras]:
+            norm = _normalize_text(candidate)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            merged.append(candidate)
+        return merged
+
+    positive_phrases = _merge_phrases(key_phrase, aug.get("positives", []))
+    confuser_phrases = aug.get("confusers", [])
+    inbetween_phrases = aug.get("inbetween", [])
+    plain_negative_phrases = _generate_plain_negative_phrases(
+        key_phrase,
+        max(
+            requirements["plain_negatives"],
+            (growth_constant // sample_multiplier) + 1 if growth_constant > 0 else 0,
+            1,
+        ),
+    )
+
+    category_phrases = {
+        "positives": positive_phrases,
+        "confusers": confuser_phrases,
+        "inbetween": inbetween_phrases,
+        "plain_negatives": plain_negative_phrases,
+    }
+
+    sample_requirements = {
+        bucket: requirements[bucket] * sample_multiplier for bucket in requirements
+    }
+
+    return per_api_counts, sample_multiplier, requirements, category_phrases, sample_requirements
 
 
 def _project_root() -> Path:
@@ -296,6 +410,17 @@ def _maybe_clip_record_to_keyphrase(
         min_duration = max_duration
 
     try:
+        from data_generation.keyphrase_finding.internal.finder import (
+            find_keyphrase_segment_with_margin,
+        )
+    except Exception as exc:
+        print(
+            f"[main_audio_generator] Skipping positive clipping (keyphrase finder unavailable): {exc}",
+            flush=True,
+        )
+        return record
+
+    try:
         span_start, span_end = find_keyphrase_segment_with_margin(
             wav_path=path,
             transcript=transcript,
@@ -330,6 +455,8 @@ def _maybe_clip_record_to_keyphrase(
 
     if not out_path.exists():
         try:
+            from data_generation.keyphrase_finding.driver import extract_keyphrase_audio
+
             extract_keyphrase_audio(path, span_start, span_end, str(out_path))
         except Exception as exc:
             print(
@@ -547,6 +674,8 @@ def generate_phrase_wavs(
     records: List[dict] = []
     if num_piper > 0:
         try:
+            from audio_generation.piper_side.driver import synthesize as piper_synthesize
+
             recs = piper_synthesize(
                 phrase=phrase_aug,
                 num_samples=num_piper,
@@ -561,6 +690,8 @@ def generate_phrase_wavs(
             print(f"[main_audio_generator] Piper failed: {e}")
     if num_bark > 0:
         try:
+            from audio_generation.suno_side.driver import synthesize as bark_synthesize
+
             recs = bark_synthesize(
                 phrase=phrase_aug,
                 num_samples=num_bark,
@@ -575,6 +706,8 @@ def generate_phrase_wavs(
             print(f"[main_audio_generator] Bark failed: {e}")
     if num_kokoro > 0:
         try:
+            from audio_generation.kokoro_side.driver import synthesize as kokoro_synthesize
+
             recs = kokoro_synthesize(
                 text=phrase_aug,
                 num_samples=num_kokoro,
@@ -589,6 +722,8 @@ def generate_phrase_wavs(
             print(f"[main_audio_generator] Kokoro failed: {e}")
     if num_eleven > 0:
         try:
+            from audio_generation.elevenlabs_side.driver import synthesize as eleven_synthesize
+
             recs = eleven_synthesize(
                 phrase=phrase_aug,
                 num_samples=num_eleven,
@@ -602,6 +737,144 @@ def generate_phrase_wavs(
         except Exception as e:
             print(f"[main_audio_generator] ElevenLabs failed: {e}")
     return records
+
+
+
+def plan_generation_with_augmentations(
+    key_phrase: str,
+    *,
+    num_confusers: int,
+    num_positives: int,
+    num_inbetween: int,
+    num_piper_per: int = 0,
+    num_bark_per: int = 0,
+    num_kokoro_per: int = 0,
+    num_eleven_per: int = 0,
+    confuser_inbetween_prob: float = 0.5,
+    p_pos_extra_start: float = 0.5,
+    p_pos_extra_end: float = 0.5,
+    max_inserts_per_gap: int = 2,
+    num_plain_negatives: int = 0,
+    growth_constant: int = 0,
+    num_tps_random: int = 0,
+    progress_callback: Optional[GenerationProgressCallback] = None,
+) -> GenerationPlan:
+    """
+    Fast, DB-only planning step. Computes how many clips are needed per category
+    and how many can be satisfied from the existing database without launching synthesis.
+    """
+    growth_constant = max(0, int(growth_constant))
+    _ensure_db_initialized()
+    key_norm = _normalize_text(key_phrase)
+
+    (
+        per_api_counts,
+        sample_multiplier,
+        requirements,
+        category_phrases,
+        sample_requirements,
+    ) = _build_generation_setup(
+        key_phrase=key_phrase,
+        num_confusers=num_confusers,
+        num_positives=num_positives,
+        num_inbetween=num_inbetween,
+        num_plain_negatives=num_plain_negatives,
+        num_piper_per=num_piper_per,
+        num_bark_per=num_bark_per,
+        num_kokoro_per=num_kokoro_per,
+        num_eleven_per=num_eleven_per,
+        confuser_inbetween_prob=confuser_inbetween_prob,
+        p_pos_extra_start=p_pos_extra_start,
+        p_pos_extra_end=p_pos_extra_end,
+        max_inserts_per_gap=max_inserts_per_gap,
+        growth_constant=growth_constant,
+    )
+
+    progress_summary: Dict[str, Dict[str, Any]] = {}
+    existing_records: Dict[str, List[dict]] = {}
+
+    # TPS planning entry (no fetch)
+    tps_target = max(0, int(num_tps_random))
+    tps_planning = {
+        "category": "tps_random",
+        "category_label": CATEGORY_LABELS.get("tps_random", "TPS Samples"),
+        "requested_phrases": 0,
+        "phrases_available": 0,
+        "samples_per_phrase": 1,
+        "target_clips": tps_target,
+        "db_clips_used": 0,
+        "db_clips_available": 0,
+        "generated_clips": 0,
+        "completed_clips": 0,
+        "growth_constant": 0,
+        "completion_percent": 0,
+        "reused_by_api": {},
+        "generated_by_api": {},
+        "phase": "planning",
+    }
+    progress_summary["tps_random"] = tps_planning
+    if progress_callback:
+        try:
+            progress_callback(tps_planning)
+        except Exception as exc:
+            print(f"[main_audio_generator] Progress callback failed: {exc}", flush=True)
+
+    for bucket in ("positives", "confusers", "inbetween", "plain_negatives"):
+        needed_samples = sample_requirements.get(bucket, 0)
+        phrases = category_phrases.get(bucket, [])
+        if needed_samples <= 0 and growth_constant <= 0:
+            existing_records[bucket] = []
+            continue
+        if bucket == "plain_negatives":
+            recs = _fetch_plain_negative_records(key_norm, needed_samples)
+        else:
+            recs = _fetch_records_for_phrases(phrases, needed_samples)
+        existing_records[bucket] = recs
+        existing_used = min(len(recs), needed_samples)
+        target_clips = needed_samples if needed_samples > 0 else max(growth_constant, 0)
+        completed_clips = min(target_clips, existing_used) if target_clips > 0 else existing_used
+        completion_percent = (
+            int((completed_clips * 100) // max(1, target_clips))
+            if target_clips > 0
+            else (100 if completed_clips else 0)
+        )
+        planning_info = {
+            "category": bucket,
+            "category_label": CATEGORY_LABELS.get(bucket, bucket.replace("_", " ").title()),
+            "requested_phrases": requirements.get(bucket, 0),
+            "phrases_available": len(phrases),
+            "samples_per_phrase": sample_multiplier,
+            "target_clips": target_clips,
+            "db_clips_used": existing_used,
+            "db_clips_available": len(recs),
+            "generated_clips": 0,
+            "completed_clips": completed_clips,
+            "growth_constant": growth_constant,
+            "completion_percent": completion_percent,
+            "reused_by_api": _count_by_api(recs[:existing_used]),
+            "generated_by_api": {},
+            "phase": "planning",
+        }
+        progress_summary[bucket] = planning_info
+        if progress_callback:
+            try:
+                progress_callback(planning_info)
+            except Exception as exc:
+                print(f"[main_audio_generator] Progress callback failed: {exc}", flush=True)
+
+    return GenerationPlan(
+        key_phrase=key_phrase,
+        key_norm=key_norm,
+        requirements=requirements,
+        per_api_counts=per_api_counts,
+        sample_multiplier=sample_multiplier,
+        category_phrases=category_phrases,
+        sample_requirements=sample_requirements,
+        existing_records=existing_records,
+        growth_constant=growth_constant,
+        num_tps_random=max(0, int(num_tps_random)),
+        progress_summary=progress_summary,
+    )
 
 
 def generate_with_augmentations(
@@ -626,12 +899,14 @@ def generate_with_augmentations(
     num_plain_negatives: int = 0,
     growth_constant: int = 0,
     num_tps_random: int = 0,
-) -> Dict[str, List[dict]]:
+    plan: Optional[GenerationPlan] = None,
+    progress_callback: Optional[GenerationProgressCallback] = None,
+) -> Tuple[Dict[str, List[dict]], Dict[str, List[dict]], Dict[str, Dict[str, Any]]]:
     """
     Generate audio for each augmentation category. For every category we:
       1. Inspect the DB for existing usable samples.
       2. Generate max(growth_constant, required - existing) fresh samples to grow the pool.
-    Returns two JSON payloads: (positive_payload, negative_payload).
+    Returns two JSON payloads and a per-category progress summary.
     """
     output_dir = output_dir or str((_project_root() / "samples").resolve())
     piper_kwargs = piper_kwargs or {}
@@ -639,57 +914,35 @@ def generate_with_augmentations(
     kokoro_kwargs = kokoro_kwargs or {}
     eleven_kwargs = eleven_kwargs or {}
     growth_constant = max(0, int(growth_constant))
-    per_api_counts = {
-        "piper": max(0, int(num_piper_per)),
-        "bark": max(0, int(num_bark_per)),
-        "kokoro": max(0, int(num_kokoro_per)),
-        "eleven": max(0, int(num_eleven_per)),
-    }
-    samples_per_phrase = sum(per_api_counts.values())
-    sample_multiplier = samples_per_phrase if samples_per_phrase > 0 else 1
-    _ensure_db_initialized()
-    key_norm = _normalize_text(key_phrase)
-
-    requirements = {
-        "positives": max(0, int(num_positives)),
-        "confusers": max(0, int(num_confusers)),
-        "inbetween": max(0, int(num_inbetween)),
-        "plain_negatives": max(0, int(num_plain_negatives)),
-    }
-
-    aug = generate_augmented_phrases(
-        key_phrase=key_phrase,
-        num_confusers=max(1, requirements["confusers"]),
-        num_positives=max(1, requirements["positives"]),
-        num_inbetween=max(1, requirements["inbetween"]),
-        confuser_inbetween_prob=confuser_inbetween_prob,
-        p_pos_extra_start=p_pos_extra_start,
-        p_pos_extra_end=p_pos_extra_end,
-        max_inserts_per_gap=max_inserts_per_gap,
-    )
-
-    def _merge_phrases(primary: str, extras: Sequence[str]) -> List[str]:
-        seen: set[str] = set()
-        merged: List[str] = []
-        for candidate in [primary, *extras]:
-            norm = _normalize_text(candidate)
-            if not norm or norm in seen:
-                continue
-            seen.add(norm)
-            merged.append(candidate)
-        return merged
-
-    positive_phrases = _merge_phrases(key_phrase, aug.get("positives", []))
-    confuser_phrases = aug.get("confusers", [])
-    inbetween_phrases = aug.get("inbetween", [])
-    plain_negative_phrases = _generate_plain_negative_phrases(
-        key_phrase,
-        max(
-            requirements["plain_negatives"],
-            (growth_constant // sample_multiplier) + 1 if growth_constant > 0 else 0,
-            1,
-        ),
-    )
+    if plan is None:
+        plan = plan_generation_with_augmentations(
+            key_phrase=key_phrase,
+            num_confusers=num_confusers,
+            num_positives=num_positives,
+            num_inbetween=num_inbetween,
+            num_piper_per=num_piper_per,
+            num_bark_per=num_bark_per,
+            num_kokoro_per=num_kokoro_per,
+            num_eleven_per=num_eleven_per,
+            confuser_inbetween_prob=confuser_inbetween_prob,
+            p_pos_extra_start=p_pos_extra_start,
+            p_pos_extra_end=p_pos_extra_end,
+            max_inserts_per_gap=max_inserts_per_gap,
+            num_plain_negatives=num_plain_negatives,
+            growth_constant=growth_constant,
+            num_tps_random=num_tps_random,
+            progress_callback=progress_callback,
+        )
+    per_api_counts = plan.per_api_counts
+    sample_multiplier = plan.sample_multiplier
+    requirements = plan.requirements
+    category_phrases = plan.category_phrases
+    sample_requirements = plan.sample_requirements
+    growth_constant = plan.growth_constant
+    num_tps_random = plan.num_tps_random
+    key_norm = plan.key_norm
+    progress_summary: Dict[str, Dict[str, Any]] = dict(plan.progress_summary or {})
+    existing_records_map: Dict[str, List[dict]] = {k: list(v) for k, v in (plan.existing_records or {}).items()}
 
     out: Dict[str, List[dict]] = {
         "positives": [],
@@ -700,7 +953,10 @@ def generate_with_augmentations(
     }
 
     if num_tps_random > 0:
+        tps_target = max(0, int(num_tps_random))
         try:
+            from audio_generation.tps_side.tps_generator import get_wavs_from_tps
+
             tps_records = get_wavs_from_tps(num_tps_random)
         except Exception as exc:
             print(f"[main_audio_generator] TPS fetch failed: {exc}")
@@ -709,30 +965,76 @@ def generate_with_augmentations(
             rec["from_db"] = False
         _insert_records(tps_records)
         out["tps_random"].extend(tps_records)
-
-    category_phrases = {
-        "positives": positive_phrases,
-        "confusers": confuser_phrases,
-        "inbetween": inbetween_phrases,
-        "plain_negatives": plain_negative_phrases,
-    }
-
-    sample_requirements = {
-        bucket: requirements[bucket] * sample_multiplier for bucket in requirements
-    }
-
+        tps_completed = min(tps_target, len(tps_records)) if tps_target > 0 else len(tps_records)
+        tps_percent = int((tps_completed * 100) // max(1, tps_target)) if tps_target > 0 else (100 if tps_completed else 0)
+        tps_progress = {
+            "category": "tps_random",
+            "category_label": CATEGORY_LABELS.get("tps_random", "TPS Samples"),
+            "requested_phrases": 0,
+            "phrases_available": 0,
+            "samples_per_phrase": 1,
+            "target_clips": tps_target,
+            "db_clips_used": 0,
+            "db_clips_available": 0,
+            "generated_clips": len(tps_records),
+            "completed_clips": tps_completed,
+            "growth_constant": 0,
+            "completion_percent": tps_percent,
+            "reused_by_api": {},
+            "generated_by_api": _count_by_api(tps_records),
+            "phase": "done",
+        }
+        progress_summary["tps_random"] = tps_progress
+        if progress_callback:
+            try:
+                progress_callback(tps_progress)
+            except Exception as exc:
+                print(f"[main_audio_generator] Progress callback failed: {exc}", flush=True)
     for bucket in ("positives", "confusers", "inbetween", "plain_negatives"):
         needed_samples = sample_requirements.get(bucket, 0)
         phrases = category_phrases.get(bucket, [])
         if needed_samples <= 0 and growth_constant <= 0:
             continue
-        if bucket == "plain_negatives":
-            existing_records = _fetch_plain_negative_records(key_norm, needed_samples)
-        else:
-            existing_records = _fetch_records_for_phrases(phrases, needed_samples)
+        existing_records = list(existing_records_map.get(bucket, []))
+        if not existing_records:
+            if bucket == "plain_negatives":
+                existing_records = _fetch_plain_negative_records(key_norm, needed_samples)
+            else:
+                existing_records = _fetch_records_for_phrases(phrases, needed_samples)
+            existing_records_map[bucket] = existing_records
+        existing_used = min(len(existing_records), needed_samples)
+
         if bucket == "positives":
             existing_records = _prepare_positive_records(existing_records, key_phrase, output_dir)
-        existing_used = min(len(existing_records), needed_samples)
+            existing_used = min(len(existing_records), needed_samples)
+            if progress_callback:
+                # Update after preparing/clipping positives (still pre-synthesis).
+                target_clips = needed_samples if needed_samples > 0 else max(growth_constant, 0)
+                completed_clips = min(target_clips, existing_used) if target_clips > 0 else existing_used
+                completion_percent = int((completed_clips * 100) // max(1, target_clips)) if target_clips > 0 else (100 if completed_clips else 0)
+                prepared_info = {
+                    "category": bucket,
+                    "category_label": CATEGORY_LABELS.get(bucket, bucket.replace("_", " ").title()),
+                    "requested_phrases": requirements.get(bucket, 0),
+                    "phrases_available": len(phrases),
+                    "samples_per_phrase": sample_multiplier,
+                    "target_clips": target_clips,
+                    "db_clips_used": existing_used,
+                    "db_clips_available": len(existing_records),
+                    "generated_clips": 0,
+                    "completed_clips": completed_clips,
+                    "growth_constant": growth_constant,
+                    "completion_percent": completion_percent,
+                    "reused_by_api": _count_by_api(existing_records[:existing_used]),
+                    "generated_by_api": {},
+                    "phase": "prepared",
+                }
+                try:
+                    progress_callback(prepared_info)
+                except Exception as exc:
+                    print(f"[main_audio_generator] Progress callback failed: {exc}", flush=True)
+
+        reused_records = existing_records[:existing_used]
         new_target = max(growth_constant, max(0, needed_samples - existing_used))
         new_records = _generate_new_records(
             phrases or [key_phrase],
@@ -754,6 +1056,36 @@ def generate_with_augmentations(
             f" growth_constant={growth_constant} new_generated={len(new_records)}",
             flush=True,
         )
+        target_clips = needed_samples if needed_samples > 0 else new_target
+        completed_clips = existing_used + len(new_records)
+        if target_clips > 0:
+            completed_clips = min(target_clips, completed_clips)
+            completion_percent = int(max(0, min(100, (completed_clips * 100) // max(1, target_clips))))
+        else:
+            completion_percent = 100 if completed_clips > 0 else 0
+        progress_info = {
+            "category": bucket,
+            "category_label": CATEGORY_LABELS.get(bucket, bucket.replace("_", " ").title()),
+            "requested_phrases": requirements.get(bucket, 0),
+            "phrases_available": len(phrases),
+            "samples_per_phrase": sample_multiplier,
+            "target_clips": target_clips,
+            "db_clips_used": existing_used,
+            "db_clips_available": len(existing_records),
+            "generated_clips": len(new_records),
+            "completed_clips": completed_clips,
+            "growth_constant": growth_constant,
+            "completion_percent": completion_percent,
+            "reused_by_api": _count_by_api(reused_records),
+            "generated_by_api": _count_by_api(new_records),
+            "phase": "done",
+        }
+        progress_summary[bucket] = progress_info
+        if progress_callback:
+            try:
+                progress_callback(progress_info)
+            except Exception as exc:
+                print(f"[main_audio_generator] Progress callback failed: {exc}", flush=True)
 
     positives_payload = {"label": "positive", "records": []}
     negatives_payload = {"label": "negative", "records": []}
@@ -764,7 +1096,7 @@ def generate_with_augmentations(
             rec_with_category.setdefault("category", bucket)
             target_payload["records"].append(rec_with_category)
 
-    return positives_payload, negatives_payload
+    return positives_payload, negatives_payload, progress_summary
 
 
 if __name__ == "__main__":
@@ -828,7 +1160,7 @@ if __name__ == "__main__":
             growth_const = int(input("Growth constant per category [3]: ").strip() or "3")
         except Exception:
             growth_const = 3
-        pos_payload, neg_payload = generate_with_augmentations(
+        pos_payload, neg_payload, _progress = generate_with_augmentations(
             key_phrase=key,
             num_confusers=nconf,
             num_positives=npos,
@@ -849,6 +1181,8 @@ if __name__ == "__main__":
         print(json.dumps(pos_payload, indent=2))
         print("Negative payload:")
         print(json.dumps(neg_payload, indent=2))
+        print("Progress summary:")
+        print(json.dumps(_progress, indent=2))
     else:
         recs = generate_phrase_wavs(
             key, num_piper=npip, num_bark=nbark, num_kokoro=nkok, num_eleven=nelev

@@ -1,0 +1,7 @@
+kokoro-onnx>=0.4.9
+numpy>=2.2.6
+onnxruntime>=1.23.2
+soundfile>=0.13.1
+librosa>=0.10.1
+pyworld>=0.3.4
+

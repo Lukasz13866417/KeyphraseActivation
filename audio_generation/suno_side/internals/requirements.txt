@@ -1,0 +1,4 @@
+bark
+numpy>=1.26
+soundfile>=0.13.1
+

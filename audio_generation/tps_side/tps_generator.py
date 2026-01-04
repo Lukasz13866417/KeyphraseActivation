@@ -6,9 +6,6 @@ import itertools
 import sys
 import time
 
-from datasets import load_dataset
-import soundfile as sf
-
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -32,6 +29,16 @@ def get_wavs_from_tps(
 
     start_time = time.time()
     print(f"[TPS] Requesting {num_clips} clip(s) from MLCommons/peoples_speech...", flush=True)
+    try:
+        from datasets import load_dataset  # type: ignore
+    except Exception as exc:
+        print(f"[TPS] 'datasets' dependency is missing or broken: {exc}", file=sys.stderr, flush=True)
+        return []
+    try:
+        import soundfile as sf  # type: ignore
+    except Exception as exc:
+        print(f"[TPS] 'soundfile' dependency is missing or broken: {exc}", file=sys.stderr, flush=True)
+        return []
     try:
         dataset = load_dataset("MLCommons/peoples_speech", "clean", split="train", streaming=True)
         dataset = dataset.shuffle(buffer_size=shuffle_buffer, seed=random.randrange(10**6))

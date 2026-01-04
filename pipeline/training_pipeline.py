@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
@@ -20,6 +20,7 @@ from model.model import TinyCRNN
 from model.spectrogram_config import SpectrogramConfig
 
 ProgressCallback = Callable[[int, int, float, float, float], None]
+GenerationProgressCallback = Callable[[Dict[str, Any]], None]
 
 
 @dataclass
@@ -59,9 +60,10 @@ def run_training_pipeline(
     config: TrainingConfig,
     *,
     progress_callback: Optional[ProgressCallback] = None,
+    generation_progress_callback: Optional[GenerationProgressCallback] = None,
 ) -> TrainingResult:
     start_time = time.time()
-    pos_payload, neg_payload = generate_with_augmentations(
+    pos_payload, neg_payload, generation_report = generate_with_augmentations(
         key_phrase=config.key_phrase,
         num_confusers=config.num_confusers,
         num_positives=config.num_positives,
@@ -73,7 +75,11 @@ def run_training_pipeline(
         num_eleven_per=config.num_eleven_per,
         num_tps_random=config.num_tps_random,
         growth_constant=config.growth_constant,
+        progress_callback=generation_progress_callback,
     )
+    if generation_progress_callback and generation_report:
+        for info in generation_report.values():
+            generation_progress_callback(info)
 
     df = build_dataset_dataframe(pos_payload, neg_payload)
     if df.empty:
@@ -129,8 +135,11 @@ def _train_model(
     progress_callback: Optional[ProgressCallback],
 ) -> Tuple[List[Tuple[int, float, float, float]], Path]:
     spect_cfg = SpectrogramConfig()
-    train_ds = AudioDataset(train_df, spect_cfg, augment=True)
-    val_ds = AudioDataset(val_df, spect_cfg, augment=False)
+    model_dir = Path(artifact_dir or (Path.cwd() / "artifacts"))
+    model_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = model_dir / "spec_cache"
+    train_ds = AudioDataset(train_df, spect_cfg, augment=True, cache_dir=cache_dir, memory_cache_items=512)
+    val_ds = AudioDataset(val_df, spect_cfg, augment=False, cache_dir=cache_dir, memory_cache_items=512)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=_collate_batch)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=_collate_batch)
@@ -154,8 +163,6 @@ def _train_model(
         if progress_callback:
             progress_callback(epoch, epochs, train_loss, val_loss, val_f1)
 
-    model_dir = Path(artifact_dir or (Path.cwd() / "artifacts"))
-    model_dir.mkdir(parents=True, exist_ok=True)
     safe_key = _slugify(key_phrase) or "keyphrase"
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     model_path = model_dir / f"{safe_key}_{timestamp}.pt"

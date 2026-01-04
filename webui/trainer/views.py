@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from django.http import FileResponse, Http404, HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from .forms import TrainingRequestForm
 from .models import TrainingRun
-from .tasks import enqueue_training
+from .tasks import plan_generation
 
 
 def index(request: HttpRequest) -> HttpResponse:
@@ -26,7 +26,7 @@ def index(request: HttpRequest) -> HttpResponse:
                 key_phrase=form.cleaned_data["key_phrase"].strip(),
                 config=config,
             )
-            enqueue_training(run.id)
+            plan_generation(run.id)
             return redirect(reverse("trainer:index"))
     else:
         form = TrainingRequestForm()
@@ -50,4 +50,23 @@ def download_model(request: HttpRequest, run_id: int) -> FileResponse:
     if not model_path.exists():
         raise Http404("Model file missing.")
     return FileResponse(model_path.open("rb"), as_attachment=True, filename=model_path.name)
+
+
+def run_progress(request: HttpRequest, run_id: int) -> JsonResponse:
+    run = get_object_or_404(TrainingRun, pk=run_id)
+    payload = {
+        "id": run.id,
+        "key_phrase": run.key_phrase,
+        "status": run.status,
+        "generation_progress": run.generation_progress or {},
+        "generation_progress_items": run.generation_progress_items,
+        "generation_progress_totals": run.generation_progress_totals,
+        "is_download_ready": run.is_download_ready,
+        "download_url": reverse("trainer:download", args=[run.id]) if run.is_download_ready else None,
+        "train_loss": run.train_loss,
+        "val_loss": run.val_loss,
+        "macro_f1": run.macro_f1,
+        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+    }
+    return JsonResponse(payload)
 
