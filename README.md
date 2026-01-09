@@ -67,7 +67,8 @@ I have put a significant amount of effort to reuse as much of the data as possib
 - To avoid dependency issues, major sub-projects (subfolders of `audio_generation` that use TTS engines, also `data_generation/keyword_finding`) are separate projects that communicate with the main one using driver scripts (using `subprocess` library)
 
 ## Docker setup
-> If docker compose/build cant run, try running with sudo
+
+> If docker compose/build cant run, try running with sudo. NOTE: Web app needs fixing! Sometimes doesn't sync with backend. Also, the **first time** you try it, it will be **very slow due to lack of pre-existing data!**
 - **Build the image**
   - `docker build -t keyphrase-activation .`
 - **Use docker compose**
